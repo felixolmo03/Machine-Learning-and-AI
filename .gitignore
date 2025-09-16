@@ -41,6 +41,15 @@ htmlcov/
 .tox/
 .nox/
 .coverage
+
+# Jupyter Notebook Files
+.bash_logout
+.bashrc
+.jupyter/
+.local/
+.profile
+.vim/
+.viminfo
 .coverage.*
 .cache
 nosetests.xml
