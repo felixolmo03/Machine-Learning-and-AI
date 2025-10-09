@@ -1,2 +1,2 @@
 source .venv/bin/activate
-mlflow server --port 8080
+mlflow server --host 0.0.0.0 --port 8080
