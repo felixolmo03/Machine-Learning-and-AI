@@ -1,0 +1,66 @@
+# Base Transformer Model Configuration
+# ~350M parameters, suitable for initial training and experimentation
+
+model:
+  config_name: "base"
+  vocab_size: 50000
+  max_seq_length: 2048
+  hidden_size: 1024
+  num_layers: 24
+  num_attention_heads: 16
+  intermediate_size: 4096
+  attention_dropout: 0.1
+  hidden_dropout: 0.1
+  positional_encoding: "rope"
+  activation: "gelu"
+  gradient_checkpointing: true
+
+training:
+  # Data
+  train_data_path: "data/processed/train.txt"
+  val_data_path: "data/processed/val.txt"
+  use_cached_dataset: true  # Use StoryDatasetPreloaded with caching
+  cache_dir: "data/cache"  # Directory for cached tokenized data
+
+  # Optimization
+  batch_size: 8
+  gradient_accumulation_steps: 4  # Effective batch size: 32
+  learning_rate: 3.0e-4
+  weight_decay: 0.1
+  max_grad_norm: 1.0
+
+  # Schedule
+  num_epochs: 10
+  warmup_steps: 2000
+  lr_scheduler: "cosine"
+
+  # Mixed precision
+  use_amp: true
+  amp_dtype: "bfloat16"  # Use "float16" if bfloat16 not supported
+
+  # Checkpointing
+  save_dir: "checkpoints/base_model"
+  save_every_n_steps: 5000
+  keep_last_n_checkpoints: 3
+
+  # Logging
+  log_every_n_steps: 100
+  eval_every_n_steps: 1000
+  use_mlflow: true
+  mlflow_experiment_name: "storyteller"
+  mlflow_run_name: "base_model"
+  mlflow_tracking_uri: "http://localhost:8080"
+
+  # Hardware
+  # Device options: "smart", "mps", "cuda", "cuda:0", "cuda:1", "cpu"
+  # "smart" will intelligently select: MPS > available CUDA GPU > CPU
+  device: "smart"
+  num_workers: 4
+  pin_memory: true
+
+generation:
+  max_new_tokens: 512
+  temperature: 0.9
+  top_p: 0.95
+  top_k: 50
+  repetition_penalty: 1.1
