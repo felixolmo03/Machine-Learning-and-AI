@@ -1,6 +1,6 @@
 # Miscellaneous
 mlruns/
-data/
+/data/
 docs/DESIGN.md
 docs/TODO.md
 .coverage
