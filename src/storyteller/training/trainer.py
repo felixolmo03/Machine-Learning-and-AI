@@ -36,6 +36,8 @@ try:
 except ImportError:
     MLFLOW_AVAILABLE = False
 
+from storyteller.evaluation import StoryEvaluator
+
 
 class Trainer:
     """
@@ -63,6 +65,13 @@ class Trainer:
         mlflow_experiment_name: Optional[str] = None,
         mlflow_run_name: Optional[str] = None,
         mlflow_tracking_uri: Optional[str] = None,
+        mlflow_log_system_metrics: bool = True,
+        tokenizer: Optional = None,
+        num_eval_samples: int = 50,
+        eval_max_length: int = 512,
+        eval_temperature: float = 1.0,
+        eval_top_k: int = 50,
+        eval_top_p: float = 0.95,
     ):
         """
         Initialize trainer.
@@ -87,6 +96,13 @@ class Trainer:
             mlflow_experiment_name: MLflow experiment name
             mlflow_run_name: MLflow run name
             mlflow_tracking_uri: MLflow tracking server URI (optional)
+            mlflow_log_system_metrics: Whether to log system metrics (CPU, GPU, memory)
+            tokenizer: Tokenizer for story generation during evaluation
+            num_eval_samples: Number of stories to generate during evaluation
+            eval_max_length: Maximum length of generated stories
+            eval_temperature: Sampling temperature for story generation
+            eval_top_k: Top-k sampling parameter
+            eval_top_p: Top-p (nucleus) sampling parameter
         """
         self.model = model.to(device)
         self.train_dataloader = train_dataloader
@@ -130,6 +146,14 @@ class Trainer:
             if mlflow_tracking_uri:
                 mlflow.set_tracking_uri(mlflow_tracking_uri)
 
+            # Enable system metrics logging if requested
+            if mlflow_log_system_metrics:
+                try:
+                    mlflow.enable_system_metrics_logging()
+                    print("  MLflow system metrics logging enabled")
+                except Exception as e:
+                    print(f"  Warning: Could not enable system metrics logging: {e}")
+
             # Set experiment
             experiment_name = mlflow_experiment_name or "storyteller"
             mlflow.set_experiment(experiment_name)
@@ -155,6 +179,7 @@ class Trainer:
                     "max_grad_norm": max_grad_norm,
                     "use_amp": use_amp,
                     "amp_dtype": amp_dtype,
+                    "device": str(self.device),
                 }
             )
 
@@ -162,6 +187,15 @@ class Trainer:
         self.global_step = 0
         self.epoch = 0
         self.best_val_loss = float("inf")
+
+        # Evaluation config
+        self.tokenizer = tokenizer
+        self.num_eval_samples = num_eval_samples
+        self.eval_max_length = eval_max_length
+        self.eval_temperature = eval_temperature
+        self.eval_top_k = eval_top_k
+        self.eval_top_p = eval_top_p
+        self.story_evaluator = StoryEvaluator()
 
     def _configure_amp(self, use_amp: bool, amp_dtype: str) -> bool:
         """
@@ -366,7 +400,65 @@ class Trainer:
         if avg_moe_loss > 0:
             metrics["val/moe_loss"] = avg_moe_loss
 
+        # Phase 1: Generate stories and compute quality metrics
+        if self.tokenizer is not None and self.num_eval_samples > 0:
+            generated_texts = self._generate_eval_stories()
+            if generated_texts:
+                # Compute Phase 1 metrics
+                story_metrics = self.story_evaluator.evaluate_texts(generated_texts)
+                metrics.update(story_metrics)
+
         return metrics
+
+    def _generate_eval_stories(self) -> list:
+        """
+        Generate sample stories for evaluation.
+
+        Returns:
+            List of generated story strings
+        """
+        generated_texts = []
+
+        # Sample prompts for story generation
+        prompts = [
+            "Once upon a time",
+            "In a land far away",
+            "There once was",
+            "Long ago",
+            "One day",
+        ]
+
+        try:
+            for i in range(self.num_eval_samples):
+                # Cycle through prompts
+                prompt = prompts[i % len(prompts)]
+
+                # Encode prompt
+                input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(
+                    self.device
+                )
+
+                # Generate with sampling
+                output_ids = self.model.generate(
+                    input_ids,
+                    max_new_tokens=self.eval_max_length,
+                    temperature=self.eval_temperature,
+                    top_k=self.eval_top_k,
+                    top_p=self.eval_top_p,
+                    do_sample=True,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                )
+
+                # Decode generated text
+                text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+                generated_texts.append(text)
+
+        except Exception as e:
+            print(f"Warning: Story generation failed during evaluation: {e}")
+            return []
+
+        return generated_texts
 
     def train(self, num_epochs: int):
         """

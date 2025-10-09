@@ -235,7 +235,6 @@ class SwitchRouter(nn.Module):
             Tuple of (expert_indices, expert_weights, router_stats)
         """
         batch_size, seq_len, hidden_size = hidden_states.shape
-        num_tokens = batch_size * seq_len
 
         # Flatten for routing
         hidden_flat = hidden_states.reshape(-1, hidden_size)

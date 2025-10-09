@@ -89,29 +89,24 @@ def create_scheduler(
     scheduler_type = config.get("lr_scheduler", "cosine")
 
     if scheduler_type == "cosine":
-        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+        from torch.optim.lr_scheduler import LambdaLR
+        import math
 
-        # Warmup phase
-        warmup_scheduler = LinearLR(
-            optimizer,
-            start_factor=1e-8,
-            end_factor=1.0,
-            total_iters=warmup_steps,
-        )
+        # Create a lambda function that implements warmup + cosine decay
+        def lr_lambda(current_step: int):
+            if current_step < warmup_steps:
+                # Linear warmup
+                return float(current_step) / float(max(1, warmup_steps))
+            else:
+                # Cosine decay
+                progress = float(current_step - warmup_steps) / float(
+                    max(1, num_training_steps - warmup_steps)
+                )
+                cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+                # Scale to end at 0.1 of initial LR
+                return 0.1 + (1.0 - 0.1) * cosine_decay
 
-        # Cosine decay phase
-        cosine_scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=num_training_steps - warmup_steps,
-            eta_min=config["learning_rate"] * 0.1,
-        )
-
-        # Combine warmup + cosine
-        scheduler = SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, cosine_scheduler],
-            milestones=[warmup_steps],
-        )
+        scheduler = LambdaLR(optimizer, lr_lambda)
 
     elif scheduler_type == "linear":
         from torch.optim.lr_scheduler import LinearLR
@@ -272,6 +267,9 @@ def main():
     print("Creating learning rate scheduler...")
     scheduler = create_scheduler(optimizer, train_config, num_training_steps)
 
+    # Get evaluation config
+    eval_config = train_config.get("evaluation", {})
+
     # Create trainer
     trainer = Trainer(
         model=model,
@@ -293,6 +291,13 @@ def main():
         mlflow_experiment_name=train_config.get("mlflow_experiment_name"),
         mlflow_run_name=train_config.get("mlflow_run_name"),
         mlflow_tracking_uri=train_config.get("mlflow_tracking_uri"),
+        mlflow_log_system_metrics=train_config.get("mlflow_log_system_metrics", True),
+        tokenizer=tokenizer,
+        num_eval_samples=eval_config.get("num_eval_samples", 50),
+        eval_max_length=eval_config.get("eval_max_length", 512),
+        eval_temperature=eval_config.get("eval_temperature", 1.0),
+        eval_top_k=eval_config.get("eval_top_k", 50),
+        eval_top_p=eval_config.get("eval_top_p", 0.95),
     )
 
     # Resume from checkpoint if specified

@@ -43,12 +43,24 @@ storyteller-tokenizer \
 
 ### Step 2: Train a Model
 
-**Option A: Base Model (350M params)**
+**Option A: Fast Training Demo (~10M params) - Recommended for learning**
+```bash
+storyteller-train --config configs/fast_train.yaml
+```
+Trains in 10-20 minutes! Perfect for students to quickly see training dynamics, loss curves, and evaluation metrics in action. Great for understanding the system before longer training runs.
+
+**Option B: Minimal Model (~50M params) - For testing**
+```bash
+storyteller-train --config configs/min_model.yaml
+```
+Fast to train, uses less memory, perfect for validating your setup.
+
+**Option C: Base Model (350M params)**
 ```bash
 storyteller-train --config configs/base_model.yaml
 ```
 
-**Option B: MoE Model (500M total, 100M active)**
+**Option D: MoE Model (500M total, 100M active)**
 ```bash
 storyteller-train --config configs/moe_model.yaml
 ```
@@ -95,7 +107,8 @@ storyteller/
 │   ├── model/              # Model architecture
 │   ├── training/           # Training code
 │   ├── inference/          # Generation code
-│   └── evaluation/         # Metrics
+│   ├── evaluation/         # Metrics
+│   └── utils/              # Utilities (device selection, etc.)
 ├── configs/                # YAML configs
 ├── docs/                   # Documentation
 ├── notebooks/              # Jupyter tutorials
@@ -109,13 +122,27 @@ Edit `configs/base_model.yaml` or `configs/moe_model.yaml` to customize:
 - Training hyperparameters (learning rate, batch size)
 - MoE settings (number of experts, routing strategy)
 - Hardware settings (device, mixed precision)
+- Dataset caching (use_cached_dataset for faster subsequent runs)
+
+**Device Selection:**
+Set `device: "smart"` to automatically select the best available compute:
+- Priority: MPS (Apple Silicon) > available CUDA GPU > CPU
+- Smart mode checks GPU memory usage in multi-GPU systems
+- Manual options: "mps", "cuda", "cuda:0", "cuda:1", "cpu"
 
 ## Tips
 
-1. **Start Small**: Test with the base model first before training the larger MoE model
-2. **Monitor Training**: Use W&B by setting `use_wandb: true` in the config
-3. **Adjust Batch Size**: Reduce batch size if you run out of GPU memory
-4. **Experiment with Sampling**: Try different temperature/top-k/top-p values for generation
+1. **Start Small**: Use the fast training demo (`fast_train.yaml`) to quickly understand the system, then try minimal model (`min_model.yaml`) to validate your setup, and finally scale up to base or MoE models
+2. **Monitor Training**: Use MLflow by setting `use_mlflow: true` in the config
+   - Start tracking server: `mlflow ui --port 8080`
+   - View at http://localhost:8080
+   - System metrics (CPU, GPU, memory) are logged automatically
+3. **Use Cached Datasets**: Set `use_cached_dataset: true` to avoid re-tokenizing on subsequent runs
+   - First run tokenizes and caches (~11 minutes for full dataset)
+   - Subsequent runs load from cache in seconds
+4. **Smart Device Selection**: Set `device: "smart"` to automatically use the best available hardware
+5. **Adjust Batch Size**: Reduce batch size if you run out of GPU memory
+6. **Experiment with Sampling**: Try different temperature/top-k/top-p values for generation
 
 ## Troubleshooting
 

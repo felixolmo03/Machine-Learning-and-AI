@@ -107,6 +107,12 @@ storyteller-tokenizer --input_file data/processed/train.txt --output_dir data/to
 ### 2. Train Model
 
 ```bash
+# Fast training demo (~10M params) - 10-20 minutes, perfect for learning
+storyteller-train --config configs/fast_train.yaml
+
+# Train minimal model (~50M params) - testing and validation
+storyteller-train --config configs/min_model.yaml
+
 # Train base model (350M params)
 storyteller-train --config configs/base_model.yaml
 
@@ -156,18 +162,58 @@ The project uses MLflow for tracking experiments, metrics, and models.
 ### Start MLflow UI
 
 ```bash
-mlflow ui
+mlflow ui --port 8080
 ```
 
-Then open http://localhost:5000 to view your experiments, compare runs, and analyze metrics.
+Then open http://localhost:8080 to view your experiments, compare runs, and analyze metrics.
 
 ### Logged Metrics
 - Training/validation loss and perplexity
 - Learning rate schedule
 - MoE expert utilization and balance
+- System metrics (CPU, GPU, memory, disk, network) - enabled by default
 - Model checkpoints and artifacts
 
-See [MLflow.md](MLflow.md) for detailed usage guide.
+See [docs/MLflow.md](docs/MLflow.md) for detailed usage guide.
+
+## Evaluation Strategy
+
+### Train/Val Split (No Separate Test Set)
+
+This project uses a **train/validation split without a separate test set**. This is a deliberate design choice appropriate for educational and research base models:
+
+**Why This Approach:**
+
+1. **Educational Focus**: This is a learning project for understanding LLM concepts, not a production system requiring publication-quality metrics
+2. **Iterative Development**: The validation set serves multiple purposes during active development:
+   - Monitoring training progress in real-time
+   - Early stopping to prevent overfitting
+   - Hyperparameter tuning across experiments
+   - Quality metrics tracking (diversity, repetition, etc.)
+3. **Resource Efficiency**: Holding out a third dataset would reduce training data, which is valuable for a base model
+4. **Common for Base Models**: Many foundational models use train/val splits during development, reserving test sets for final evaluation when needed
+
+**When You Would Need a Test Set:**
+
+- Publishing research results requiring unbiased metrics
+- Comparing multiple final models after extensive hyperparameter tuning
+- Production deployment requiring strict performance guarantees
+- Downstream task evaluation (fine-tuning, transfer learning)
+
+**Our Validation Set Usage:**
+
+The validation set in this project serves as a held-out set for:
+- Computing unbiased loss and perplexity during training
+- Generating sample stories for quality assessment
+- Tracking Phase 1 metrics (diversity, repetition, length, vocabulary)
+- Checkpoint selection (saving best model based on val loss)
+
+**Data Split:**
+- Training: ~7.8M stories (94.5%)
+- Validation: ~435K stories (5.5%)
+- Total: ~426M training tokens, ~23M validation tokens
+
+If you decide to productionize this model or need formal benchmarking, you can easily create a test set by further splitting the validation data or holding out additional data during preprocessing.
 
 ## Development
 
@@ -177,11 +223,17 @@ See [MLflow.md](MLflow.md) for detailed usage guide.
 pytest tests/
 ```
 
-### Code Formatting
+### Code Quality
 
 ```bash
-black .
-isort .
+# Linting with ruff
+python -m ruff check
+
+# Auto-fix issues
+python -m ruff check --fix
+
+# Format code
+python -m ruff format
 ```
 
 ### Type Checking

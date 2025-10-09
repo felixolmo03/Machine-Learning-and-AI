@@ -9,14 +9,14 @@ The Storyteller project uses [MLflow](https://mlflow.org/) for experiment tracki
 MLflow automatically logs to a local `mlruns` directory by default. To view the UI:
 
 ```bash
-# From project root
-mlflow ui
+# From project root (default configs use port 8080)
+mlflow ui --port 8080
 
-# Or specify a different port
-mlflow ui --port 5001
+# Or use default port 5000
+mlflow ui
 ```
 
-Then open http://localhost:5000 in your browser.
+Then open http://localhost:8080 in your browser (or http://localhost:5000 if using default port).
 
 ### 2. Training with MLflow
 
@@ -27,7 +27,8 @@ training:
   use_mlflow: true
   mlflow_experiment_name: "storyteller"
   mlflow_run_name: "base_model"
-  # mlflow_tracking_uri: "http://localhost:5000"  # Optional
+  mlflow_tracking_uri: "http://localhost:8080"  # Match UI port
+  mlflow_log_system_metrics: true  # Log CPU, GPU, memory (default: true)
 ```
 
 ### 3. Run Training
@@ -50,6 +51,18 @@ storyteller-train --config configs/base_model.yaml
 - `val/perplexity` - Validation perplexity
 - `moe/layer_X_balance` - Expert balance for MoE layers
 - `moe/layer_X_entropy` - Routing entropy for MoE layers
+
+### System Metrics (if enabled)
+Automatically logged when `mlflow_log_system_metrics: true`:
+- `system/cpu_utilization_percentage` - CPU usage
+- `system/gpu_X_utilization_percentage` - GPU utilization per device
+- `system/gpu_X_memory_usage_percentage` - GPU memory per device
+- `system/gpu_X_memory_usage_megabytes` - GPU memory in MB
+- `system/disk_usage_percentage` - Disk usage
+- `system/network_receive_megabytes` - Network receive
+- `system/network_transmit_megabytes` - Network transmit
+- `system/system_memory_usage_percentage` - RAM usage
+- `system/system_memory_usage_megabytes` - RAM in MB
 
 ### Artifacts
 - **Final model**: Saved as MLflow model
@@ -165,7 +178,7 @@ Or training will work fine if MLflow is not installed (graceful fallback).
 
 ```bash
 # 1. Start UI
-mlflow ui &
+mlflow ui --port 8080 &
 
 # 2. Train baseline
 storyteller-train --config configs/base_model.yaml
@@ -173,7 +186,7 @@ storyteller-train --config configs/base_model.yaml
 # 3. Train MoE model
 storyteller-train --config configs/moe_model.yaml
 
-# 4. Open browser to http://localhost:5000
+# 4. Open browser to http://localhost:8080
 
 # 5. Compare runs and select best model
 

@@ -338,6 +338,9 @@ class StorytellerModel(nn.Module):
         top_p: Optional[float] = None,
         repetition_penalty: float = 1.0,
         eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
+        do_sample: bool = True,
+        **kwargs,  # Accept additional kwargs for compatibility
     ) -> torch.Tensor:
         """
         Generate text autoregressively.
@@ -350,6 +353,9 @@ class StorytellerModel(nn.Module):
             top_p: Nucleus (top-p) sampling
             repetition_penalty: Penalty for repeating tokens
             eos_token_id: Token ID for end of sequence
+            pad_token_id: Token ID for padding (unused, for compatibility)
+            do_sample: Whether to use sampling (unused, always samples)
+            **kwargs: Additional arguments for compatibility
 
         Returns:
             Generated token IDs (batch_size, seq_len + max_new_tokens)

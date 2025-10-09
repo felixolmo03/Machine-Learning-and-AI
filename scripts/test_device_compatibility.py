@@ -71,7 +71,7 @@ def test_basic_operations(device_str: str):
         y = torch.randn(100, 100, device=device)
 
         # Matrix multiplication
-        z = torch.mm(x, y)
+        _ = torch.mm(x, y)
         print("  ✓ Matrix multiplication works")
 
         # Gradient computation
@@ -89,14 +89,14 @@ def test_basic_operations(device_str: str):
                 from torch.amp import autocast
 
                 with autocast(device_type=device_str, dtype=torch.float16):
-                    result = torch.mm(x, y)
+                    _ = torch.mm(x, y)
                 print("  ✓ Mixed precision (unified AMP) works")
             except ImportError:
                 # Fall back to old API
                 from torch.cuda.amp import autocast
 
                 with autocast(dtype=torch.float16):
-                    result = torch.mm(x, y)
+                    _ = torch.mm(x, y)
                 print("  ✓ Mixed precision (CUDA AMP) works")
 
             # Test bfloat16 if CUDA
@@ -105,7 +105,7 @@ def test_basic_operations(device_str: str):
                     from torch.amp import autocast
 
                     with autocast(device_type=device_str, dtype=torch.bfloat16):
-                        result = torch.mm(x, y)
+                        _ = torch.mm(x, y)
                     print("  ✓ bfloat16 works")
                 except Exception as e:
                     print(f"  ✗ bfloat16 failed: {e}")

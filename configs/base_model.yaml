@@ -50,6 +50,15 @@ training:
   mlflow_experiment_name: "storyteller"
   mlflow_run_name: "base_model"
   mlflow_tracking_uri: "http://localhost:8080"
+  mlflow_log_system_metrics: true  # Log CPU, GPU, memory metrics
+
+  # Evaluation metrics (Phase 1)
+  evaluation:
+    num_eval_samples: 50  # Number of stories to generate during evaluation
+    eval_max_length: 512  # Maximum length of generated stories
+    eval_temperature: 1.0  # Sampling temperature for evaluation
+    eval_top_k: 50  # Top-k sampling parameter
+    eval_top_p: 0.95  # Top-p (nucleus) sampling parameter
 
   # Hardware
   # Device options: "smart", "mps", "cuda", "cuda:0", "cuda:1", "cpu"

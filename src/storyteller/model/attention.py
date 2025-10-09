@@ -87,7 +87,7 @@ class MultiHeadAttention(nn.Module):
                 # Flash attention 2 is available in PyTorch 2.0+
                 # via scaled_dot_product_attention
                 self.flash_available = hasattr(F, "scaled_dot_product_attention")
-            except:
+            except Exception:
                 pass
 
     def forward(

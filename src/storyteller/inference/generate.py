@@ -150,28 +150,28 @@ class StoryGenerator:
                         try:
                             temperature = float(prompt.split()[1])
                             print(f"Temperature set to {temperature}")
-                        except:
+                        except (ValueError, IndexError):
                             print("Usage: /temp <value>")
 
                     elif prompt.startswith("/topk"):
                         try:
                             top_k = int(prompt.split()[1])
                             print(f"Top-k set to {top_k}")
-                        except:
+                        except (ValueError, IndexError):
                             print("Usage: /topk <value>")
 
                     elif prompt.startswith("/topp"):
                         try:
                             top_p = float(prompt.split()[1])
                             print(f"Top-p set to {top_p}")
-                        except:
+                        except (ValueError, IndexError):
                             print("Usage: /topp <value>")
 
                     elif prompt.startswith("/length"):
                         try:
                             max_length = int(prompt.split()[1])
                             print(f"Max length set to {max_length}")
-                        except:
+                        except (ValueError, IndexError):
                             print("Usage: /length <value>")
 
                     else:
