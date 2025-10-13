@@ -141,8 +141,8 @@ def main():
     parser.add_argument(
         "--tokenizer_path",
         type=str,
-        default="data/tokenizers/storyteller-tokenizer",
-        help="Path to trained tokenizer",
+        default=None,
+        help="Path to trained tokenizer (default: uses config or 'data/tokenizers/storyteller-tokenizer')",
     )
 
     args = parser.parse_args()
@@ -161,9 +161,17 @@ def main():
         device = torch.device(device_config)
         print(f"Using device: {device}")
 
+    # Determine tokenizer path (priority: CLI arg > config > default)
+    if args.tokenizer_path is not None:
+        tokenizer_path = args.tokenizer_path
+    else:
+        tokenizer_path = train_config.get(
+            "tokenizer_path", "data/tokenizers/storyteller-tokenizer"
+        )
+
     # Load tokenizer
-    print(f"Loading tokenizer from {args.tokenizer_path}...")
-    tokenizer = PreTrainedTokenizerFast.from_pretrained(args.tokenizer_path)
+    print(f"Loading tokenizer from {tokenizer_path}...")
+    tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
     print(f"  Vocabulary size: {len(tokenizer):,}")
 
     # Update vocab size in config

@@ -341,8 +341,8 @@ class Trainer:
             )
 
         return {
-            "train/epoch_loss": total_loss / num_batches,
-            "train/epoch_moe_loss": total_moe_loss / num_batches
+            "epoch/train_loss": total_loss / num_batches,
+            "epoch/train_moe_loss": total_moe_loss / num_batches
             if total_moe_loss > 0
             else 0,
         }

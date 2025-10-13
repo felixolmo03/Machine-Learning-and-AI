@@ -106,31 +106,59 @@ storyteller-tokenizer --input_file data/processed/train.txt --output_dir data/to
 
 ### 2. Train Model
 
+The project includes several pre-configured models for different use cases:
+
+| Config | Params | Training Time | VRAM | Use Case |
+|--------|--------|---------------|------|----------|
+| `tiny_test.yaml` | ~3M | 2-5 min | 4GB+ | Pipeline testing, debugging |
+| `fast_train.yaml` | ~10M | 10-20 min | 8GB+ | Learning, quick demos |
+| `min_model.yaml` | ~50M | 6-12 hrs | 16GB+ | First serious training run |
+| `gpt2_small.yaml` | ~124M | 1-2 days | 24GB+ | **RECOMMENDED** - Quality stories |
+| `base_model.yaml` | ~350M | 3-4 days | 32GB+ | High-quality generation |
+| `moe_model.yaml` | ~500M (100M active) | 4-5 days | 32GB+ | Advanced MoE learning |
+
 ```bash
 # Fast training demo (~10M params) - 10-20 minutes, perfect for learning
 storyteller-train --config configs/fast_train.yaml
 
-# Train minimal model (~50M params) - testing and validation
+# GPT2-small config (~124M params) - 1-2 days, RECOMMENDED for quality stories
+storyteller-train --config configs/gpt2_small.yaml
+
+# Train minimal model (~50M params) - first serious training run
 storyteller-train --config configs/min_model.yaml
 
-# Train base model (350M params)
+# Train base model (~350M params) - high-quality generation
 storyteller-train --config configs/base_model.yaml
 
-# Train MoE model (500M total, 100M active)
+# Train MoE model (~500M total, ~100M active) - sparse architecture
 storyteller-train --config configs/moe_model.yaml
 
 # Resume from checkpoint
 storyteller-train --config configs/moe_model.yaml --resume checkpoints/checkpoint_step_10000.pt
 ```
 
+**Configuration Options:**
+
 **Device Selection:**
-The training script supports smart device selection. In your config file, set:
+In your config file, set:
 - `device: "smart"` - Automatically selects best available (MPS > available CUDA GPU > CPU)
 - `device: "mps"` - Force Apple Silicon
 - `device: "cuda"` or `"cuda:0"` - Force specific CUDA GPU
 - `device: "cpu"` - Force CPU
 
 The smart mode checks GPU memory usage and selects an available GPU in multi-GPU systems.
+
+**Tokenizer Selection:**
+Specify which tokenizer to use in the config:
+```yaml
+training:
+  tokenizer_path: "data/tokenizers/storyteller-tokenizer"  # Path to trained tokenizer
+```
+
+You can also override via CLI:
+```bash
+storyteller-train --config configs/gpt2_small.yaml --tokenizer_path path/to/custom/tokenizer
+```
 
 ### 3. Generate Stories
 
@@ -168,11 +196,12 @@ mlflow ui --port 8080
 Then open http://localhost:8080 to view your experiments, compare runs, and analyze metrics.
 
 ### Logged Metrics
-- Training/validation loss and perplexity
-- Learning rate schedule
-- MoE expert utilization and balance
-- System metrics (CPU, GPU, memory, disk, network) - enabled by default
-- Model checkpoints and artifacts
+- **Per-step metrics**: Training loss, learning rate, global step counter
+- **Per-epoch metrics**: Average training loss per epoch
+- **Validation metrics**: Loss and perplexity
+- **MoE metrics**: Expert utilization, balance, and routing entropy (when using MoE)
+- **System metrics**: CPU, GPU, memory, disk, network utilization - enabled by default
+- **Artifacts**: Model checkpoints and final model
 
 See [docs/MLflow.md](docs/MLflow.md) for detailed usage guide.
 

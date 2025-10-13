@@ -1,7 +1,22 @@
 # Fast Training Configuration
-# ~10M parameters, designed for rapid training and testing
-# Perfect for students to quickly see training dynamics and metrics in action
-# Expected training time: 10-20 minutes on consumer hardware
+# ~10M parameters - Rapid training demonstration model
+#
+# MODEL TYPE: Small decoder-only transformer
+# ARCHITECTURE: 6 layers × 256 hidden × 4 heads
+# CONTEXT: 256 tokens
+#
+# WHEN TO USE:
+# - Educational demonstrations of LLM training dynamics
+# - Quick experimentation with hyperparameters
+# - Understanding training metrics and loss curves
+# - Testing evaluation metrics implementation
+# - First-time users learning the training process
+#
+# EXPECTED TRAINING TIME: 10-20 minutes on consumer hardware
+# HARDWARE: Any device (CPU, MPS, CUDA) - 4-8GB VRAM recommended
+# OUTPUT QUALITY: Basic text patterns, simple sentences, not full stories
+#
+# IDEAL FOR: Students and educators to see a complete training cycle quickly
 
 model:
   config_name: "fast"
@@ -21,6 +36,7 @@ training:
   # Data
   train_data_path: "data/processed/train.txt"
   val_data_path: "data/processed/val.txt"
+  tokenizer_path: "data/tokenizers/storyteller-tokenizer"  # Path to trained tokenizer
   use_cached_dataset: true  # Use cached data for faster startup
   cache_dir: "data/cache"
 

@@ -1,6 +1,24 @@
-# MoE Model Configuration
+# Mixture of Experts (MoE) Model Configuration
 # ~500M total parameters, ~100M active per forward pass
-# Optimized for 32GB VRAM
+#
+# MODEL TYPE: Sparse Mixture of Experts decoder-only transformer
+# ARCHITECTURE: 16 layers × 1024 hidden × 16 heads
+# MoE CONFIG: 8 experts per layer, Top-2 routing, every other layer
+# CONTEXT: 2048 tokens
+#
+# WHEN TO USE:
+# - Learning modern sparse MoE architectures (Mixtral, GPT-4 style)
+# - Research on expert specialization and routing
+# - Maximum model capacity within 32GB VRAM constraint
+# - Exploring expert load balancing and utilization
+# - Educational projects on cutting-edge LLM techniques
+#
+# EXPECTED TRAINING TIME: 4-5 days on consumer hardware (32GB VRAM)
+# HARDWARE: 32GB VRAM required (CUDA or MPS)
+# OUTPUT QUALITY: Potentially higher quality than base_model with same active params
+#
+# IDEAL FOR: Advanced users exploring sparse models and expert routing
+# NOTE: Primary goal is educational - learning MoE concepts, not just story quality
 
 model:
   config_name: "moe"
@@ -29,6 +47,7 @@ training:
   # Data
   train_data_path: "data/processed/train.txt"
   val_data_path: "data/processed/val.txt"
+  tokenizer_path: "data/tokenizers/storyteller-tokenizer"  # Path to trained tokenizer
   use_cached_dataset: true  # Use StoryDatasetPreloaded with caching
   cache_dir: "data/cache"  # Directory for cached tokenized data
 

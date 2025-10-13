@@ -45,10 +45,17 @@ storyteller-train --config configs/base_model.yaml
 - **Hardware settings**: device, use_amp, amp_dtype
 
 ### Metrics (per step)
-- `train/loss` - Training loss
+- `train/loss` - Training loss (per batch/step)
 - `train/learning_rate` - Current learning rate
+- `train/global_step` - Global training step counter
+
+### Metrics (per epoch)
+- `epoch/train_loss` - Average training loss for entire epoch
+- `epoch/train_moe_loss` - Average MoE auxiliary loss for epoch (if using MoE)
 - `val/loss` - Validation loss
 - `val/perplexity` - Validation perplexity
+
+### MoE Metrics (if using Mixture of Experts)
 - `moe/layer_X_balance` - Expert balance for MoE layers
 - `moe/layer_X_entropy` - Routing entropy for MoE layers
 

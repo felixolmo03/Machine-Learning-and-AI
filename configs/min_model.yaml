@@ -1,5 +1,22 @@
-# Base Transformer Model Configuration
-# ~350M parameters, suitable for initial training and experimentation
+# Minimal Model Configuration
+# ~50M parameters - Balanced testing and quality model
+#
+# MODEL TYPE: Medium-scale decoder-only transformer
+# ARCHITECTURE: 12 layers × 512 hidden × 8 heads
+# CONTEXT: 512 tokens
+#
+# WHEN TO USE:
+# - Initial full training experiments with reasonable quality
+# - Hyperparameter tuning and ablation studies
+# - Testing model changes before scaling up
+# - Resource-constrained environments (16GB VRAM)
+# - Faster iteration cycles during development
+#
+# EXPECTED TRAINING TIME: 6-12 hours on consumer hardware
+# HARDWARE: 16GB+ VRAM (CUDA) or 16GB+ unified memory (MPS)
+# OUTPUT QUALITY: Decent short stories with basic coherence and structure
+#
+# IDEAL FOR: First serious training run with actual story generation capability
 
 model:
   config_name: "min"
@@ -19,6 +36,7 @@ training:
   # Data
   train_data_path: "data/processed/train.txt"
   val_data_path: "data/processed/val.txt"
+  tokenizer_path: "data/tokenizers/storyteller-tokenizer"  # Path to trained tokenizer
   use_cached_dataset: true  # Use StoryDatasetPreloaded with caching
   cache_dir: "data/cache"  # Directory for cached tokenized data
 

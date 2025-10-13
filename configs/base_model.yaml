@@ -1,5 +1,22 @@
-# Base Transformer Model Configuration
-# ~350M parameters, suitable for initial training and experimentation
+# Base Model Configuration
+# ~350M parameters - High-quality storytelling model
+#
+# MODEL TYPE: Large decoder-only transformer
+# ARCHITECTURE: 24 layers × 1024 hidden × 16 heads
+# CONTEXT: 2048 tokens (full-length stories)
+#
+# WHEN TO USE:
+# - High-quality story generation with rich vocabulary
+# - Research requiring larger model capacity
+# - Longer context for complex narratives
+# - Comparison baseline for MoE experiments
+# - When you have time for longer training runs
+#
+# EXPECTED TRAINING TIME: 3-4 days on consumer hardware (32GB VRAM)
+# HARDWARE: 32GB VRAM (CUDA) or 64GB+ unified memory (MPS)
+# OUTPUT QUALITY: High-quality creative stories with complex plots and characters
+#
+# IDEAL FOR: Users wanting maximum quality from a dense transformer
 
 model:
   config_name: "base"
@@ -19,6 +36,7 @@ training:
   # Data
   train_data_path: "data/processed/train.txt"
   val_data_path: "data/processed/val.txt"
+  tokenizer_path: "data/tokenizers/storyteller-tokenizer"  # Path to trained tokenizer
   use_cached_dataset: true  # Use StoryDatasetPreloaded with caching
   cache_dir: "data/cache"  # Directory for cached tokenized data
 
