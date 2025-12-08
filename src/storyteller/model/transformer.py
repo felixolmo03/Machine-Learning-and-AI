@@ -140,6 +140,7 @@ class StorytellerModel(nn.Module):
         """
         super().__init__()
         self.config = config
+        self.label_smoothing = 0.0  # Can be set after initialization
 
         # Token embeddings
         self.token_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -202,6 +203,11 @@ class StorytellerModel(nn.Module):
     def set_input_embeddings(self, new_embeddings):
         """Set token embeddings."""
         self.token_embeddings = new_embeddings
+
+    def set_label_smoothing(self, label_smoothing: float):
+        """Set label smoothing factor for loss calculation."""
+        self.label_smoothing = label_smoothing
+        print(f"✓ Model label smoothing set to {label_smoothing}")
 
     def forward(
         self,
@@ -289,8 +295,8 @@ class StorytellerModel(nn.Module):
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
 
-            # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
+            # Flatten the tokens and apply label smoothing if configured
+            loss_fct = CrossEntropyLoss(label_smoothing=self.label_smoothing)
             loss = loss_fct(
                 shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
             )
