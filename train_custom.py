@@ -22,23 +22,30 @@ Features:
 
 Usage Examples:
 
-    # Basic training (small model for testing)
-    python3 train_custom.py --download_data --epochs 3 --batch_size 8 --hidden_size 512 --num_layers 6
+    # Optimal training (500M model, best settings - RECOMMENDED)
+    python3 train_custom.py --use_scheduler
 
-    # Large model with all improvements
-    python3 train_custom.py --download_data --use_tiktoken --hidden_size 1024 --num_layers 12 --num_heads 16 --batch_size 16 --epochs 5 --label_smoothing 0.1 --use_scheduler --warmup_steps 2000
+    # With fresh data download
+    python3 train_custom.py --download_data --use_scheduler
 
-    # Resume from checkpoint with generation monitoring
-    python3 train_custom.py --resume checkpoints/checkpoint_step_5000.pt --epochs 10 --monitor_generation
+    # Increase effective batch size with gradient accumulation (if OOM)
+    python3 train_custom.py --batch_size 32 --gradient_accumulation_steps 4 --use_scheduler
 
-    # Custom checkpoint frequency (save every 500 steps)
-    python3 train_custom.py --download_data --save_every_n_steps 500 --epochs 5
+    # Resume from checkpoint
+    python3 train_custom.py --resume checkpoints/checkpoint_step_10000.pt --use_scheduler
 
-    # With all datasets combined
-    python3 train_custom.py --download_data --download_wiki --download_cleanpdf --use_tiktoken --hidden_size 1024 --num_layers 12 --epochs 10 --label_smoothing 0.1 --use_scheduler
+    # With generation monitoring (test quality during training)
+    python3 train_custom.py --use_scheduler --monitor_generation --generation_interval 1
 
     # Multi-GPU training with torchrun (4 GPUs)
-    torchrun --nproc_per_node=4 train_custom.py --download_data --download_cleanpdf --use_tiktoken --batch_size 16 --epochs 10 --label_smoothing 0.1 --use_scheduler
+    torchrun --nproc_per_node=4 train_custom.py --download_data --use_scheduler
+
+Note: Default settings are now optimized for best results:
+- 24 layers, 1024 hidden size (~500M parameters)
+- Batch size 64
+- 10 epochs
+- Label smoothing 0.1
+- Checkpoints every 2000 steps
 """
 
 import argparse
@@ -957,18 +964,20 @@ def train_epoch(
     rank: int = 0,
     is_distributed: bool = False,
     writer: Optional[SummaryWriter] = None,
+    gradient_accumulation_steps: int = 1,
 ):
-    """Train for one epoch with frequent checkpointing and LR scheduling."""
+    """Train for one epoch with frequent checkpointing, LR scheduling, and gradient accumulation."""
     model.train()
     total_loss = 0
     num_batches = 0
+    accumulated_loss = 0
 
     # Only show progress bar on rank 0
     if rank == 0:
         pbar = tqdm(dataloader, desc=f"Epoch {epoch}")
     else:
         pbar = dataloader
-        
+
     for batch_idx, batch in enumerate(pbar):
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
@@ -985,19 +994,27 @@ def train_epoch(
         # Get loss from model (includes label smoothing if configured)
         loss = outputs["loss"]
 
+        # Scale loss by accumulation steps
+        loss = loss / gradient_accumulation_steps
+
         # Backward pass
-        optimizer.zero_grad()
         loss.backward()
-        
-        # Get the actual model for gradient clipping (unwrap DDP if needed)
-        model_to_clip = model.module if is_distributed else model
-        torch.nn.utils.clip_grad_norm_(model_to_clip.parameters(), 1.0)
-        
-        optimizer.step()
-        
-        # Step the learning rate scheduler
-        if scheduler is not None:
-            scheduler.step()
+
+        # Track loss (use unscaled loss for logging)
+        accumulated_loss += loss.item() * gradient_accumulation_steps
+
+        # Only update weights every gradient_accumulation_steps
+        if (batch_idx + 1) % gradient_accumulation_steps == 0:
+            # Get the actual model for gradient clipping (unwrap DDP if needed)
+            model_to_clip = model.module if is_distributed else model
+            torch.nn.utils.clip_grad_norm_(model_to_clip.parameters(), 1.0)
+
+            optimizer.step()
+            optimizer.zero_grad()
+
+            # Step the learning rate scheduler
+            if scheduler is not None:
+                scheduler.step()
 
             # Log LR every 100 steps for monitoring
             if global_step % 100 == 0 and rank == 0:
@@ -1011,38 +1028,40 @@ def train_epoch(
                     print(f"\n⚠ WARNING: Learning rate too small ({current_lr:.2e}), stopping training")
                 return total_loss / max(num_batches, 1), global_step
 
-        # Track metrics
-        total_loss += loss.item()
-        num_batches += 1
-        global_step += 1
-        
-        # Log to TensorBoard
-        if writer is not None and rank == 0:
-            writer.add_scalar('Loss/train_step', loss.item(), global_step)
-            writer.add_scalar('Loss/train_avg', total_loss/num_batches, global_step)
-            
-            # Log learning rate
-            current_lr = optimizer.param_groups[0]['lr']
-            writer.add_scalar('Learning_Rate', current_lr, global_step)
-        
-        # Only update progress bar on rank 0
-        if rank == 0 and hasattr(pbar, 'set_postfix'):
-            current_lr = optimizer.param_groups[0]['lr']
-            pbar.set_postfix({
-                "loss": f"{loss.item():.4f}",
-                "avg_loss": f"{total_loss/num_batches:.4f}",
-                "lr": f"{current_lr:.2e}",
-                "step": global_step
-            })
+            # Track metrics (only after actual optimizer step)
+            total_loss += accumulated_loss
+            num_batches += 1
+            global_step += 1
+            accumulated_loss = 0  # Reset for next accumulation cycle
 
-        # Save checkpoint every N steps (only on rank 0)
-        if global_step % save_every_n_steps == 0 and rank == 0:
-            checkpoint_path = save_dir / f"checkpoint_step_{global_step}.pt"
-            # Unwrap DDP model before saving
-            model_to_save = model.module if is_distributed else model
-            save_checkpoint(model_to_save, optimizer, epoch, checkpoint_path, global_step, scheduler)
-            if rank == 0:
-                print(f"\n💾 Checkpoint saved at step {global_step} (rank {rank})")
+            # Log to TensorBoard
+            if writer is not None and rank == 0:
+                writer.add_scalar('Loss/train_step', total_loss/num_batches, global_step)
+                writer.add_scalar('Loss/train_avg', total_loss/num_batches, global_step)
+
+                # Log learning rate
+                current_lr = optimizer.param_groups[0]['lr']
+                writer.add_scalar('Learning_Rate', current_lr, global_step)
+
+            # Only update progress bar on rank 0
+            if rank == 0 and hasattr(pbar, 'set_postfix'):
+                current_lr = optimizer.param_groups[0]['lr']
+                effective_batch = gradient_accumulation_steps * batch["input_ids"].size(0)
+                pbar.set_postfix({
+                    "loss": f"{total_loss/num_batches:.4f}",
+                    "lr": f"{current_lr:.2e}",
+                    "step": global_step,
+                    "eff_bs": effective_batch
+                })
+
+            # Save checkpoint every N steps (only on rank 0)
+            if global_step % save_every_n_steps == 0 and rank == 0:
+                checkpoint_path = save_dir / f"checkpoint_step_{global_step}.pt"
+                # Unwrap DDP model before saving
+                model_to_save = model.module if is_distributed else model
+                save_checkpoint(model_to_save, optimizer, epoch, checkpoint_path, global_step, scheduler)
+                if rank == 0:
+                    print(f"\n💾 Checkpoint saved at step {global_step} (rank {rank})")
 
     avg_loss = total_loss / num_batches
     return avg_loss, global_step
@@ -1146,15 +1165,16 @@ def main():
     parser = argparse.ArgumentParser(description="Train Storyteller model with repetition prevention")
     
     # Training hyperparameters
-    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size per GPU")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation steps (effective batch = batch_size * accum_steps)")
     parser.add_argument("--learning_rate", type=float, default=3e-4, help="Learning rate")
     parser.add_argument("--max_seq_length", type=int, default=512, help="Max sequence length")
-    
+
     # Model architecture
-    parser.add_argument("--hidden_size", type=int, default=512, help="Hidden size")
-    parser.add_argument("--num_layers", type=int, default=6, help="Number of layers")
-    parser.add_argument("--num_heads", type=int, default=8, help="Number of attention heads")
+    parser.add_argument("--hidden_size", type=int, default=1024, help="Hidden size")
+    parser.add_argument("--num_layers", type=int, default=24, help="Number of layers")
+    parser.add_argument("--num_heads", type=int, default=16, help="Number of attention heads")
     parser.add_argument("--use_moe", action="store_true", help="Use MoE layers")
     
     # Data options
@@ -1177,7 +1197,7 @@ def main():
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Checkpoint directory")
     parser.add_argument("--device", type=str, default=None, help="Device (cuda:0, cpu, etc)")
     parser.add_argument("--resume", type=str, default=None, help="Resume from checkpoint path")
-    parser.add_argument("--save_every_n_steps", type=int, default=1000, help="Save checkpoint every N steps")
+    parser.add_argument("--save_every_n_steps", type=int, default=2000, help="Save checkpoint every N steps")
 
     args = parser.parse_args()
 
@@ -1185,15 +1205,37 @@ def main():
     dist_config = detect_distributed_config()
 
     print("\n" + "="*60)
-    print("STORYTELLER TRAINING (WITH REPETITION PREVENTION)")
+    print("STORYTELLER TRAINING (OPTIMIZED FOR BEST RESULTS)")
     print("="*60 + "\n")
-    
+
+    # Calculate expected model parameters
+    # Rough estimate: params ≈ 12 * num_layers * hidden_size^2
+    estimated_params = 12 * args.num_layers * (args.hidden_size ** 2) / 1e6
+    effective_batch_size = args.batch_size * args.gradient_accumulation_steps
+
+    print("⚙️  Model Configuration:")
+    print(f"   Layers: {args.num_layers}")
+    print(f"   Hidden Size: {args.hidden_size}")
+    print(f"   Attention Heads: {args.num_heads}")
+    print(f"   Estimated Parameters: ~{estimated_params:.0f}M")
+    print()
+
+    print("📊 Training Configuration:")
+    print(f"   Epochs: {args.epochs}")
+    print(f"   Batch Size: {args.batch_size}")
+    print(f"   Gradient Accumulation: {args.gradient_accumulation_steps}x")
+    print(f"   Effective Batch Size: {effective_batch_size}")
+    print(f"   Learning Rate: {args.learning_rate:.2e}")
+    print(f"   Max Sequence Length: {args.max_seq_length}")
+    print()
+
     print("🎯 Quality Improvements Enabled:")
     print(f"   Label Smoothing: {args.label_smoothing}")
     print(f"   LR Scheduler: {args.use_scheduler}")
     if args.use_scheduler:
         print(f"   Warmup Steps: {args.warmup_steps}")
     print(f"   Generation Monitoring: {args.monitor_generation}")
+    print(f"   Checkpoint Interval: Every {args.save_every_n_steps} steps")
     print()
 
     if dist_config.enabled:
@@ -1384,6 +1426,7 @@ def main():
                     rank=0,
                     is_distributed=False,
                     writer=writer,
+                    gradient_accumulation_steps=args.gradient_accumulation_steps,
                 )
                 print(f"Train Loss: {train_loss:.4f}")
 
