@@ -22,28 +22,27 @@ Features:
 
 Usage Examples:
 
-    # CPU Training (Mac/laptop) - Small, fast model for coherent text
-    python3 train_custom.py --preset cpu --use_scheduler --monitor_generation
-
-    # GPU Training - Medium model (150M params, good balance)
+    # GPU Training - Medium model (110M params, good balance) - RECOMMENDED
     CUDA_VISIBLE_DEVICES=1 python3 train_custom.py --preset gpu --use_scheduler
 
     # GPU Training - Large model (300M params, best quality)
     CUDA_VISIBLE_DEVICES=1 python3 train_custom.py --preset gpu_large --use_scheduler
 
     # Custom settings
-    python3 train_custom.py --num_layers 8 --hidden_size 512 --batch_size 4 --use_scheduler
+    python3 train_custom.py --num_layers 8 --hidden_size 512 --batch_size 16 --use_scheduler
 
     # Resume from checkpoint
     python3 train_custom.py --resume checkpoints/checkpoint_step_10000.pt --use_scheduler
+
+    # With generation monitoring (test quality during training)
+    CUDA_VISIBLE_DEVICES=1 python3 train_custom.py --preset gpu --use_scheduler --monitor_generation
 
     # Multi-GPU training with torchrun
     torchrun --nproc_per_node=4 train_custom.py --preset gpu --use_scheduler
 
 Presets:
-- 'cpu': 6 layers, 512 hidden, ~40M params - Optimized for CPU training, coherent text in 20-30K steps
-- 'gpu': 12 layers, 768 hidden, ~110M params - Balanced GPU training
-- 'gpu_large': 24 layers, 1024 hidden, ~300M params - Maximum quality (requires 12GB+ VRAM)
+- 'gpu': 12 layers, 768 hidden, ~110M params - Balanced GPU training (8-10GB VRAM)
+- 'gpu_large': 24 layers, 1024 hidden, ~300M params - Maximum quality (12GB+ VRAM)
 """
 
 import argparse
@@ -1164,8 +1163,8 @@ def main():
 
     # Preset configurations
     parser.add_argument("--preset", type=str, default=None,
-                       choices=['cpu', 'gpu', 'gpu_large'],
-                       help="Use preset configuration (cpu/gpu/gpu_large)")
+                       choices=['gpu', 'gpu_large'],
+                       help="Use preset configuration (gpu/gpu_large)")
 
     # Training hyperparameters
     parser.add_argument("--epochs", type=int, default=None, help="Number of epochs")
@@ -1205,20 +1204,7 @@ def main():
     args = parser.parse_args()
 
     # Apply preset configurations
-    if args.preset == 'cpu':
-        # CPU-optimized: Small model for fast training on Mac/laptop
-        # Can produce coherent text in 20-30K steps
-        args.num_layers = args.num_layers or 6
-        args.hidden_size = args.hidden_size or 512
-        args.num_heads = args.num_heads or 8
-        args.batch_size = args.batch_size or 4
-        args.gradient_accumulation_steps = args.gradient_accumulation_steps or 2  # Effective batch = 8
-        args.epochs = args.epochs or 10
-        args.max_seq_length = args.max_seq_length or 384  # Shorter for speed
-        args.learning_rate = args.learning_rate or 5e-4  # Higher LR for smaller model
-        args.save_every_n_steps = args.save_every_n_steps or 1000
-        args.warmup_steps = 500
-    elif args.preset == 'gpu':
+    if args.preset == 'gpu':
         # GPU-optimized: Medium model (110M params) - good balance
         args.num_layers = args.num_layers or 12
         args.hidden_size = args.hidden_size or 768
@@ -1298,15 +1284,6 @@ def main():
     print(f"   Generation Monitoring: {args.monitor_generation}")
     print(f"   Checkpoint Interval: Every {args.save_every_n_steps} steps")
 
-    # CPU-specific warnings/tips
-    if device_type == "CPU":
-        print()
-        print("💡 CPU Training Tips:")
-        print(f"   • Expected speed: ~10-20 seconds per step")
-        print(f"   • Coherent text expected around: 20,000-30,000 steps")
-        print(f"   • First checkpoint: Step {args.save_every_n_steps:,}")
-        print(f"   • Estimated time to coherent text: ~3-7 days")
-        print(f"   • You can monitor with: watch -n 5 'tail -20 training.log'")
     print()
 
     if dist_config.enabled:
@@ -1370,9 +1347,8 @@ def main():
         max_seq_length=args.max_seq_length,
     )
 
-    # Create dataloaders
-    # Use 0 workers on CPU to avoid multiprocessing overhead
-    num_workers = 0 if not torch.cuda.is_available() else 2
+    # Create dataloaders with workers for GPU
+    num_workers = 2
 
     train_loader = get_dataloader(
         train_dataset,
