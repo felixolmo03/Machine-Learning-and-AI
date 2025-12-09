@@ -22,30 +22,28 @@ Features:
 
 Usage Examples:
 
-    # Optimal training (500M model, best settings - RECOMMENDED)
-    python3 train_custom.py --use_scheduler
+    # CPU Training (Mac/laptop) - Small, fast model for coherent text
+    python3 train_custom.py --preset cpu --use_scheduler --monitor_generation
 
-    # With fresh data download
-    python3 train_custom.py --download_data --use_scheduler
+    # GPU Training - Medium model (150M params, good balance)
+    CUDA_VISIBLE_DEVICES=1 python3 train_custom.py --preset gpu --use_scheduler
 
-    # Increase effective batch size with gradient accumulation (if OOM)
-    python3 train_custom.py --batch_size 32 --gradient_accumulation_steps 4 --use_scheduler
+    # GPU Training - Large model (300M params, best quality)
+    CUDA_VISIBLE_DEVICES=1 python3 train_custom.py --preset gpu_large --use_scheduler
+
+    # Custom settings
+    python3 train_custom.py --num_layers 8 --hidden_size 512 --batch_size 4 --use_scheduler
 
     # Resume from checkpoint
     python3 train_custom.py --resume checkpoints/checkpoint_step_10000.pt --use_scheduler
 
-    # With generation monitoring (test quality during training)
-    python3 train_custom.py --use_scheduler --monitor_generation --generation_interval 1
+    # Multi-GPU training with torchrun
+    torchrun --nproc_per_node=4 train_custom.py --preset gpu --use_scheduler
 
-    # Multi-GPU training with torchrun (4 GPUs)
-    torchrun --nproc_per_node=4 train_custom.py --download_data --use_scheduler
-
-Note: Default settings are now optimized for best results:
-- 24 layers, 1024 hidden size (~500M parameters)
-- Batch size 64
-- 10 epochs
-- Label smoothing 0.1
-- Checkpoints every 2000 steps
+Presets:
+- 'cpu': 6 layers, 512 hidden, ~40M params - Optimized for CPU training, coherent text in 20-30K steps
+- 'gpu': 12 layers, 768 hidden, ~110M params - Balanced GPU training
+- 'gpu_large': 24 layers, 1024 hidden, ~300M params - Maximum quality (requires 12GB+ VRAM)
 """
 
 import argparse
@@ -1163,18 +1161,23 @@ def load_checkpoint(
 
 def main():
     parser = argparse.ArgumentParser(description="Train Storyteller model with repetition prevention")
-    
+
+    # Preset configurations
+    parser.add_argument("--preset", type=str, default=None,
+                       choices=['cpu', 'gpu', 'gpu_large'],
+                       help="Use preset configuration (cpu/gpu/gpu_large)")
+
     # Training hyperparameters
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size per GPU")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation steps (effective batch = batch_size * accum_steps)")
-    parser.add_argument("--learning_rate", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--max_seq_length", type=int, default=512, help="Max sequence length")
+    parser.add_argument("--epochs", type=int, default=None, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=None, help="Batch size per GPU")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=None, help="Gradient accumulation steps (effective batch = batch_size * accum_steps)")
+    parser.add_argument("--learning_rate", type=float, default=None, help="Learning rate")
+    parser.add_argument("--max_seq_length", type=int, default=None, help="Max sequence length")
 
     # Model architecture
-    parser.add_argument("--hidden_size", type=int, default=1024, help="Hidden size")
-    parser.add_argument("--num_layers", type=int, default=24, help="Number of layers")
-    parser.add_argument("--num_heads", type=int, default=16, help="Number of attention heads")
+    parser.add_argument("--hidden_size", type=int, default=None, help="Hidden size")
+    parser.add_argument("--num_layers", type=int, default=None, help="Number of layers")
+    parser.add_argument("--num_heads", type=int, default=None, help="Number of attention heads")
     parser.add_argument("--use_moe", action="store_true", help="Use MoE layers")
     
     # Data options
@@ -1197,15 +1200,68 @@ def main():
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Checkpoint directory")
     parser.add_argument("--device", type=str, default=None, help="Device (cuda:0, cpu, etc)")
     parser.add_argument("--resume", type=str, default=None, help="Resume from checkpoint path")
-    parser.add_argument("--save_every_n_steps", type=int, default=2000, help="Save checkpoint every N steps")
+    parser.add_argument("--save_every_n_steps", type=int, default=None, help="Save checkpoint every N steps")
 
     args = parser.parse_args()
+
+    # Apply preset configurations
+    if args.preset == 'cpu':
+        # CPU-optimized: Small model for fast training on Mac/laptop
+        # Can produce coherent text in 20-30K steps
+        args.num_layers = args.num_layers or 6
+        args.hidden_size = args.hidden_size or 512
+        args.num_heads = args.num_heads or 8
+        args.batch_size = args.batch_size or 4
+        args.gradient_accumulation_steps = args.gradient_accumulation_steps or 2  # Effective batch = 8
+        args.epochs = args.epochs or 10
+        args.max_seq_length = args.max_seq_length or 384  # Shorter for speed
+        args.learning_rate = args.learning_rate or 5e-4  # Higher LR for smaller model
+        args.save_every_n_steps = args.save_every_n_steps or 1000
+        args.warmup_steps = 500
+    elif args.preset == 'gpu':
+        # GPU-optimized: Medium model (110M params) - good balance
+        args.num_layers = args.num_layers or 12
+        args.hidden_size = args.hidden_size or 768
+        args.num_heads = args.num_heads or 12
+        args.batch_size = args.batch_size or 32
+        args.gradient_accumulation_steps = args.gradient_accumulation_steps or 2  # Effective batch = 64
+        args.epochs = args.epochs or 10
+        args.max_seq_length = args.max_seq_length or 512
+        args.learning_rate = args.learning_rate or 3e-4
+        args.save_every_n_steps = args.save_every_n_steps or 2000
+        args.warmup_steps = 1000
+    elif args.preset == 'gpu_large':
+        # GPU-large: Maximum quality (300M params) - requires 12GB+ VRAM
+        args.num_layers = args.num_layers or 24
+        args.hidden_size = args.hidden_size or 1024
+        args.num_heads = args.num_heads or 16
+        args.batch_size = args.batch_size or 16
+        args.gradient_accumulation_steps = args.gradient_accumulation_steps or 4  # Effective batch = 64
+        args.epochs = args.epochs or 10
+        args.max_seq_length = args.max_seq_length or 512
+        args.learning_rate = args.learning_rate or 3e-4
+        args.save_every_n_steps = args.save_every_n_steps or 2000
+        args.warmup_steps = 2000
+    else:
+        # No preset - use defaults or user-specified values
+        args.num_layers = args.num_layers or 12
+        args.hidden_size = args.hidden_size or 768
+        args.num_heads = args.num_heads or 12
+        args.batch_size = args.batch_size or 16
+        args.gradient_accumulation_steps = args.gradient_accumulation_steps or 1
+        args.epochs = args.epochs or 10
+        args.max_seq_length = args.max_seq_length or 512
+        args.learning_rate = args.learning_rate or 3e-4
+        args.save_every_n_steps = args.save_every_n_steps or 2000
+        args.warmup_steps = 1000
 
     # Detect distributed training configuration
     dist_config = detect_distributed_config()
 
     print("\n" + "="*60)
-    print("STORYTELLER TRAINING (OPTIMIZED FOR BEST RESULTS)")
+    print("STORYTELLER TRAINING")
+    if args.preset:
+        print(f"Preset: {args.preset.upper()}")
     print("="*60 + "\n")
 
     # Calculate expected model parameters
@@ -1213,11 +1269,16 @@ def main():
     estimated_params = 12 * args.num_layers * (args.hidden_size ** 2) / 1e6
     effective_batch_size = args.batch_size * args.gradient_accumulation_steps
 
+    # Determine device type for helpful messaging
+    device_type = "CPU" if not torch.cuda.is_available() else "GPU"
+
     print("⚙️  Model Configuration:")
+    print(f"   Preset: {args.preset or 'Custom'}")
     print(f"   Layers: {args.num_layers}")
     print(f"   Hidden Size: {args.hidden_size}")
     print(f"   Attention Heads: {args.num_heads}")
     print(f"   Estimated Parameters: ~{estimated_params:.0f}M")
+    print(f"   Target Device: {device_type}")
     print()
 
     print("📊 Training Configuration:")
@@ -1229,13 +1290,23 @@ def main():
     print(f"   Max Sequence Length: {args.max_seq_length}")
     print()
 
-    print("🎯 Quality Improvements Enabled:")
+    print("🎯 Quality Features:")
     print(f"   Label Smoothing: {args.label_smoothing}")
     print(f"   LR Scheduler: {args.use_scheduler}")
     if args.use_scheduler:
         print(f"   Warmup Steps: {args.warmup_steps}")
     print(f"   Generation Monitoring: {args.monitor_generation}")
     print(f"   Checkpoint Interval: Every {args.save_every_n_steps} steps")
+
+    # CPU-specific warnings/tips
+    if device_type == "CPU":
+        print()
+        print("💡 CPU Training Tips:")
+        print(f"   • Expected speed: ~10-20 seconds per step")
+        print(f"   • Coherent text expected around: 20,000-30,000 steps")
+        print(f"   • First checkpoint: Step {args.save_every_n_steps:,}")
+        print(f"   • Estimated time to coherent text: ~3-7 days")
+        print(f"   • You can monitor with: watch -n 5 'tail -20 training.log'")
     print()
 
     if dist_config.enabled:
@@ -1300,15 +1371,20 @@ def main():
     )
 
     # Create dataloaders
+    # Use 0 workers on CPU to avoid multiprocessing overhead
+    num_workers = 0 if not torch.cuda.is_available() else 2
+
     train_loader = get_dataloader(
-        train_dataset, 
-        batch_size=args.batch_size, 
+        train_dataset,
+        batch_size=args.batch_size,
         shuffle=True,
+        num_workers=num_workers,
     )
     val_loader = get_dataloader(
-        val_dataset, 
-        batch_size=args.batch_size, 
+        val_dataset,
+        batch_size=args.batch_size,
         shuffle=False,
+        num_workers=num_workers,
     )
 
     print(f"✓ Train batches: {len(train_loader)}")
