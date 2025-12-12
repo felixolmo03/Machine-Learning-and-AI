@@ -1,118 +1,178 @@
-#!/usr/bin/env python3
-"""
-Test a trained Storyteller model checkpoint.
-
-Usage:
-    python3 test_model.py checkpoints/checkpoint_step_5500.pt
-    python3 test_model.py checkpoints/best_model.pt --prompt "Once upon a time"
-"""
-
-import argparse
 import torch
-from pathlib import Path
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from dataclasses import dataclass
+from transformers import GPT2Tokenizer
 
-from src.storyteller.model import ModelConfig, StorytellerModel
-from train_custom import TikTokenWrapper
+# ============================================================================
+# MODEL DEFINITION (needed to load the weights)
+# ============================================================================
 
-
-def load_model_from_checkpoint(checkpoint_path: Path):
-    """Load model from checkpoint."""
-    print(f"Loading checkpoint from {checkpoint_path}...")
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    
-    # Recreate model config
-    config = ModelConfig(**checkpoint["config"])
-    model = StorytellerModel(config)
-    
-    # Load weights
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-    
-    epoch = checkpoint.get('epoch', 0)
-    global_step = checkpoint.get('global_step', 0)
-    
-    print(f"✓ Model loaded (epoch {epoch}, step {global_step})")
-    print(f"  Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    
-    # Show scheduler info if available
-    if 'scheduler_state_dict' in checkpoint:
-        print(f"  Scheduler: ✓ (with warmup)")
-    
-    return model, config
+@dataclass
+class ModelConfig:
+    vocab_size: int = 32000
+    max_seq_length: int = 256
+    hidden_size: int = 384
+    num_layers: int = 6
+    num_attention_heads: int = 6
+    intermediate_size: int = 1536
+    dropout: float = 0.1
 
 
-def generate_story(model, tokenizer, prompt: str, max_length: int = 200, temperature: float = 0.8):
-    """Generate a story from a prompt."""
-    print(f"\nPrompt: {prompt}")
-    print("-" * 60)
-    
-    # Encode prompt
-    input_ids = tokenizer.encode(prompt, return_tensors="pt")
-    
-    # Generate
-    with torch.no_grad():
-        output_ids = model.generate(
-            input_ids,
-            max_new_tokens=max_length,
-            temperature=temperature,
-            top_k=50,
-            top_p=0.95,
-            do_sample=True,
+class MultiHeadAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.num_heads = config.num_attention_heads
+        self.head_dim = config.hidden_size // config.num_attention_heads
+        self.hidden_size = config.hidden_size
+        
+        self.q_proj = nn.Linear(config.hidden_size, config.hidden_size)
+        self.k_proj = nn.Linear(config.hidden_size, config.hidden_size)
+        self.v_proj = nn.Linear(config.hidden_size, config.hidden_size)
+        self.out_proj = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dropout = nn.Dropout(config.dropout)
+        self.scale = math.sqrt(self.head_dim)
+        
+        self.register_buffer(
+            "causal_mask",
+            torch.triu(torch.ones(config.max_seq_length, config.max_seq_length), diagonal=1).bool()
         )
     
-    # Decode
-    generated_text = tokenizer.decode(output_ids[0])
-    print(generated_text)
-    print("-" * 60)
-    
-    return generated_text
+    def forward(self, x):
+        B, T, C = x.shape
+        
+        q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
+        
+        scores = torch.matmul(q, k.transpose(-2, -1)) / self.scale
+        scores = scores.masked_fill(self.causal_mask[:T, :T].unsqueeze(0).unsqueeze(0), float('-inf'))
+        
+        attn = F.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
+        
+        out = torch.matmul(attn, v)
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        return self.out_proj(out)
 
+
+class TransformerBlock(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(config.hidden_size)
+        self.attn = MultiHeadAttention(config)
+        self.ln2 = nn.LayerNorm(config.hidden_size)
+        self.mlp = nn.Sequential(
+            nn.Linear(config.hidden_size, config.intermediate_size),
+            nn.GELU(),
+            nn.Linear(config.intermediate_size, config.hidden_size),
+            nn.Dropout(config.dropout),
+        )
+        self.dropout = nn.Dropout(config.dropout)
+    
+    def forward(self, x):
+        x = x + self.dropout(self.attn(self.ln1(x)))
+        x = x + self.mlp(self.ln2(x))
+        return x
+
+
+class StoryModel(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.token_emb = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.pos_emb = nn.Embedding(config.max_seq_length, config.hidden_size)
+        self.dropout = nn.Dropout(config.dropout)
+        self.blocks = nn.ModuleList([TransformerBlock(config) for _ in range(config.num_layers)])
+        self.ln_f = nn.LayerNorm(config.hidden_size)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head.weight = self.token_emb.weight
+    
+    def forward(self, input_ids, labels=None):
+        B, T = input_ids.shape
+        
+        tok_emb = self.token_emb(input_ids)
+        pos_emb = self.pos_emb(torch.arange(T, device=input_ids.device))
+        x = self.dropout(tok_emb + pos_emb)
+        
+        for block in self.blocks:
+            x = block(x)
+        
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+        
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(logits[:, :-1, :].reshape(-1, logits.size(-1)), 
+                                   labels[:, 1:].reshape(-1))
+        
+        return {"logits": logits, "loss": loss}
+    
+    @torch.no_grad()
+    def generate(self, input_ids, max_length=200, temperature=0.8, top_k=50):
+        self.eval()
+        for _ in range(max_length - input_ids.size(1)):
+            input_ids_cond = input_ids[:, -self.config.max_seq_length:]
+            logits = self.forward(input_ids_cond)["logits"][:, -1, :]
+            logits = logits / temperature
+            
+            if top_k > 0:
+                v, _ = torch.topk(logits, top_k)
+                logits[logits < v[:, [-1]]] = float('-inf')
+            
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+        
+        return input_ids
+
+
+# ============================================================================
+# LOAD AND RUN
+# ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Test Storyteller model")
-    parser.add_argument("checkpoint", type=str, help="Path to checkpoint file")
-    parser.add_argument("--prompt", type=str, default="Once upon a time", help="Story prompt")
-    parser.add_argument("--max_length", type=int, default=200, help="Max tokens to generate")
-    parser.add_argument("--temperature", type=float, default=0.8, help="Sampling temperature")
-    parser.add_argument("--num_stories", type=int, default=3, help="Number of stories to generate")
+    # Setup device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
     
-    args = parser.parse_args()
+    # Load tokenizer
+    print("Loading tokenizer...")
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     
     # Load model
-    checkpoint_path = Path(args.checkpoint)
-    if not checkpoint_path.exists():
-        print(f"❌ Checkpoint not found: {checkpoint_path}")
-        return
+    print("Loading model...")
+    checkpoint = torch.load("story_model.pt", map_location=device, weights_only=False)
+    model = StoryModel(checkpoint["config"])
+    model.load_state_dict(checkpoint["model"])
+    model = model.to(device)
+    model.eval()
+    print("Model loaded!\n")
     
-    model, config = load_model_from_checkpoint(checkpoint_path)
+    # Generation function
+    def generate_story(prompt, max_length=300, temperature=0.8):
+        input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
+        output_ids = model.generate(input_ids, max_length=max_length, temperature=temperature)
+        return tokenizer.decode(output_ids[0], skip_special_tokens=True)
     
-    # Load tokenizer (assuming TikToken was used)
-    print("\nLoading tokenizer...")
-    tokenizer = TikTokenWrapper(encoding_name="cl100k_base")
-    print(f"✓ Tokenizer loaded (vocab size: {len(tokenizer):,})")
+    # Interactive loop
+    print("="*50)
+    print("STORY GENERATOR")
+    print("="*50)
+    print("Enter a prompt to generate a story.")
+    print("Type 'quit' to exit.\n")
     
-    # Generate stories
-    print(f"\n{'='*60}")
-    print(f"GENERATING {args.num_stories} STORIES")
-    print(f"{'='*60}")
-    
-    prompts = [
-        args.prompt,
-        "In a land far away",
-        "There once was a",
-        "Long ago",
-        "One day",
-    ]
-    
-    for i in range(args.num_stories):
-        prompt = prompts[i % len(prompts)]
-        print(f"\n\nStory {i+1}:")
-        generate_story(model, tokenizer, prompt, args.max_length, args.temperature)
-    
-    print(f"\n{'='*60}")
-    print("TESTING COMPLETE!")
-    print(f"{'='*60}\n")
-
+    while True:
+        prompt = input("Prompt: ")
+        if prompt.lower() == 'quit':
+            print("Goodbye!")
+            break
+        
+        print("\nGenerating...\n")
+        print("-"*50)
+        print(generate_story(prompt))
+        print("-"*50 + "\n")
 
 if __name__ == "__main__":
     main()
